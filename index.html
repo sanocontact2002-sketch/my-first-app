@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>同窓会 出欠帳</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<style>
+html{-webkit-text-size-adjust:100%}body{margin:0}[hidden]{display:none!important}img{max-width:100%}
+
+/* Layout: 出席簿の帳面。上に会の案内、ユーザー画面は登録カード＋学年別名簿、管理画面は集計→学年別→名簿の行（判子で集金）。 */
+:root{
+  --bg:#f3f5f2; --paper:#ffffff; --ink:#1d2a26; --muted:#66746f; --line:#d9e0dc;
+  --board:#2f6b4f; --board-soft:#e3efe8; --stamp:#c8372d; --stamp-soft:#fbe7e4;
+  --no:#7a8580; --no-soft:#eceeed; --gold:#a8740f; --gold-soft:#f8eed7;
+  --display:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Noto Sans JP",sans-serif;
+  --body:"Noto Sans JP","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141a18; --paper:#1c2421; --ink:#e6ece9; --muted:#9aa8a2; --line:#2e3935;
+  --board:#6cc296; --board-soft:#1f3a2d; --stamp:#ff7b6e; --stamp-soft:#3a201d;
+  --no:#a3ada9; --no-soft:#262e2b; --gold:#e3b04f; --gold-soft:#352a14; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141a18; --paper:#1c2421; --ink:#e6ece9; --muted:#9aa8a2; --line:#2e3935;
+  --board:#6cc296; --board-soft:#1f3a2d; --stamp:#ff7b6e; --stamp-soft:#3a201d;
+  --no:#a3ada9; --no-soft:#262e2b; --gold:#e3b04f; --gold-soft:#352a14; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.6}
+.wrap{max-width:780px;margin:0 auto;padding-inline:16px;padding-block:16px 72px;display:flex;flex-direction:column;gap:16px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0}
+h2{font-size:17px} h3{font-size:15px}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--board);outline-offset:2px}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)} .small{font-size:13px}
+
+/* top bar */
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.eyebrow{font-size:12px;letter-spacing:.12em;color:var(--board);font-weight:700}
+.modes{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--paper)}
+.modes button{border:0;background:transparent;padding:5px 14px;font-size:13px}
+.modes button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+
+/* event card */
+.event{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.event h1{font-size:clamp(22px,6vw,30px);line-height:1.3}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 16px;margin:0}
+.facts div{display:flex;flex-direction:column;min-width:0}
+.facts dt{font-size:11px;letter-spacing:.1em;color:var(--muted)}
+.facts dd{margin:0;font-weight:500;overflow-wrap:anywhere}
+
+/* panels */
+.panel{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);min-width:0}
+label input,label select,label textarea,.sel{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:9px 10px;font-size:16px;color:var(--ink);width:100%;min-height:44px}
+textarea{resize:vertical;min-height:90px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{border:1px solid var(--board);background:var(--board);color:var(--paper);border-radius:9px;padding:9px 16px;font-weight:700;min-height:44px}
+.btn.ghost{background:transparent;color:var(--board)}
+.btn.warn{border-color:var(--stamp);background:transparent;color:var(--stamp)}
+.btn.warn.armed{background:var(--stamp);color:var(--paper)}
+.btn.sm{min-height:36px;padding:5px 12px;font-size:13px}
+.spacer{flex:1}
+.linkbtn{background:none;border:0;padding:4px 0;color:var(--muted);font-size:13px;text-decoration:underline;text-underline-offset:3px}
+
+/* user: my card */
+.mine{display:flex;flex-direction:column;gap:6px}
+.status{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-family:var(--display);font-size:18px}
+.status.on{color:var(--board)} .status.off{color:var(--no)}
+.pill{display:inline-block;border-radius:999px;padding:1px 10px;font-size:12px;font-weight:700}
+.pill.paid{background:var(--stamp-soft);color:var(--stamp)} .pill.unpaid{background:var(--no-soft);color:var(--no)}
+
+/* grouped roster (user) */
+.groups{display:flex;flex-direction:column;gap:12px}
+.group h3{display:flex;justify-content:space-between;gap:8px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.names{display:flex;flex-wrap:wrap;gap:6px;padding-top:8px}
+.names > span:not(.chipx){background:var(--board-soft);color:var(--ink);border-radius:999px;padding:3px 12px;font-size:14px}
+.chipx{display:inline-flex;align-items:center;gap:2px;background:var(--board-soft);border-radius:999px;padding:2px 4px 2px 12px;font-size:14px}
+.chipx.cx{background:var(--no-soft);color:var(--no)}
+.chipx.dup{background:var(--gold-soft);color:var(--gold)}
+.chipx.off{opacity:.45;text-decoration:line-through}
+.chipx button{border:0;background:transparent;width:28px;height:28px;border-radius:50%;color:inherit;font-size:16px;line-height:1}
+.noteline{flex:1 1 100%;display:flex;gap:6px}
+.noteline input{flex:1;min-width:0;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:6px 9px;font-size:16px}
+
+/* admin totals */
+.totals{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.totals div{background:var(--paper);padding:12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.totals b{font-family:var(--display);font-size:24px;line-height:1.15;overflow-wrap:anywhere}
+.totals span{font-size:12px;color:var(--muted)}
+.totals .k b{color:var(--board)} .totals .r b{color:var(--stamp)} .totals .g b{color:var(--gold)}
+@media (max-width:520px){.totals{grid-template-columns:repeat(2,1fr)}.totals b{font-size:20px}}
+.bar{height:8px;border-radius:4px;background:var(--stamp-soft);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--stamp);width:0;transition:width .3s}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-size:12px;color:var(--muted);font-weight:500}
+
+/* admin list */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+.toolbar label{flex:1 1 130px}
+.bulk{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--board-soft);border-radius:10px;padding:10px}
+.list{display:flex;flex-direction:column}
+.arow{display:grid;grid-template-columns:22px minmax(0,1fr) repeat(4,40px);gap:10px;align-items:center;padding:12px 2px;border-top:1px solid var(--line)}
+@media (min-width:600px){.arow{grid-template-columns:22px 240px repeat(4,64px)}}
+.c-cb{grid-column:1;grid-row:1}
+.c-del{grid-column:6;grid-row:2;justify-self:end}
+.namebtn{background:none;border:0;padding:4px 0;text-align:left;font-weight:700;font-size:16px;color:var(--ink);overflow-wrap:anywhere;cursor:text;border-bottom:1px dashed transparent}
+.namebtn:hover{border-bottom-color:var(--muted)}
+.arow.cancel .namebtn{text-decoration:line-through;color:var(--muted)}
+.nameedit{width:100%;font-weight:700}
+.delbtn{background:none;border:0;color:var(--muted);font-size:12px;text-decoration:underline;text-underline-offset:3px;padding:6px 2px}
+.confirm{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;background:var(--stamp-soft);color:var(--stamp);border-radius:10px;padding:10px 12px;font-weight:700;font-size:14px}
+.btn.danger{background:var(--stamp);border-color:var(--stamp);color:var(--paper)}
+.c-who{grid-column:2;grid-row:1;padding:0 2px;align-self:center}
+.c-att{grid-column:3/5;grid-row:1;width:100%;height:84px}
+.c-pay{grid-column:5/7;grid-row:1;justify-self:center;width:84px!important;height:84px!important}
+.c-note{grid-column:2/4;grid-row:2}
+.c-plus{grid-column:4/6;grid-row:2;width:100%}
+.arow:first-child,.ghead+.arow{border-top:0}
+.ghead{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 12px;margin:22px 0 4px;border-top:3px solid var(--ink)}
+.ghead:first-child{margin-top:4px}
+.ghead .tab{display:inline-flex;align-items:baseline;gap:10px;padding:7px 16px 8px;background:var(--board-soft);border-radius:0 0 12px 12px}
+.ghead b{font-family:var(--display);font-size:16px}
+.ghead .age{font-family:var(--display);font-size:16px;color:var(--board);font-weight:700}
+.ghead .cnt{margin-left:auto;font-size:12px;color:var(--muted);padding-top:9px}
+.arow input[type=checkbox]{width:22px;height:22px;accent-color:var(--board)}
+.who{min-width:0;display:flex;flex-direction:column}
+.who b{overflow-wrap:anywhere}
+.who small{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.arow.cancel .who b{text-decoration:line-through;color:var(--muted)}
+.rowbtns{display:flex;gap:10px;align-items:center;margin-left:auto;align-self:flex-start}
+.tog{border:1.5px solid var(--line);background:transparent;color:var(--muted);border-radius:12px;padding:8px 14px;font-size:17px;font-weight:700;}
+.tog.on{background:var(--board);border-color:var(--board);color:var(--paper)}
+.tog.off{background:var(--no-soft);color:var(--no)}
+.inedit{flex:1 1 100%;display:grid;grid-template-columns:2fr 1fr;gap:8px;background:var(--board-soft);border-radius:10px;padding:10px;margin-top:2px}
+.inedit .actions{grid-column:1/-1}
+.inedit textarea{min-height:64px}
+@media (max-width:480px){.inedit{grid-template-columns:1fr}}
+.subin{display:flex;gap:6px;margin-top:6px}
+.arow .rplus{min-height:48px;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:6px 8px;font-size:16px;color:var(--ink);text-align:center}
+.arow .rnote{min-width:0;width:100%;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:6px 9px;font-size:16px;color:var(--ink);min-height:48px}
+.stamp{width:62px;height:62px;border-radius:50%;border:2px dashed var(--line);background:transparent;display:grid;place-items:center;font-size:13px;color:var(--muted);line-height:1.15;white-space:pre-line}
+.stamp.paid{border:3px solid var(--stamp);color:var(--stamp);font-family:var(--display);font-weight:700;font-size:26px;transform:rotate(-8deg);background:var(--stamp-soft)}
+.empty{padding:24px 12px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:4px;align-items:center}
+.empty strong{color:var(--ink);font-family:var(--display);font-size:16px}
+details.panel summary{cursor:pointer;font-family:var(--display);font-weight:700;font-size:16px}
+details.panel[open] summary{margin-bottom:4px}
+.toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 18px;border-radius:999px;font-size:14px;max-width:calc(100% - 32px);z-index:5}
+@media (prefers-reduced-motion:reduce){.bar i{transition:none}}
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <div class="top">
+    <span class="eyebrow" id="evLabel">同窓会 出欠帳</span>
+  </div>
+
+  <section class="event" aria-label="会の案内">
+    <div class="actions"><h1 id="evTitle">同窓会</h1><span class="spacer"></span><button class="btn ghost sm" id="evEditBtn" hidden>編集</button></div>
+    <dl class="facts">
+      <div><dt>日にち</dt><dd id="fDate">未定</dd></div>
+      <div><dt>時間</dt><dd id="fTime">未定</dd></div>
+      <div><dt>場所</dt><dd id="fPlace">未定</dd></div>
+      <div><dt>コース</dt><dd id="fCourse">未定</dd></div>
+      <div><dt>会費</dt><dd id="fFee" class="num">未定</dd></div>
+      <div><dt>予約人数</dt><dd id="fRes" class="num">未定</dd></div>
+    </dl>
+  </section>
+
+    <section class="panel" id="evDetails" hidden>
+      <h2>会の情報を編集</h2>
+      <div class="fields">
+        <label>いちばん上の見出し<input id="eLabel" placeholder="同窓会 出欠帳"></label>
+        <label>会の名前<input id="eName" placeholder="例：○○高校 同窓会"></label>
+        <label>学校の種類（年齢の計算に使います）<select id="eSchool"></select></label>
+        <label>日にち<input id="eDate" type="date"></label>
+        <label>時間<select id="eTime"></select></label>
+        <label>場所<input id="ePlace" placeholder="例：駅前ホテル 3階 宴会場"></label>
+        <label>会費<select id="eFee"></select></label>
+        <label>先生の会費<select id="eTFee"></select></label>
+        <label>予約人数<select id="eRes"></select></label>
+      </div>
+      <label>コース（自由記述）<textarea id="eCourse" placeholder="例：和食コース全8品＋飲み放題2時間"></textarea></label>
+      <div class="actions"><button class="btn" id="eSave">保存</button><button class="btn ghost" id="eClose">閉じる</button></div>
+    </section>
+
+  <div id="summary" hidden style="display:none;flex-direction:column;gap:16px">
+      <section class="totals" aria-label="全体の集計">
+      <div class="k"><b class="num" id="tCount">0人</b><span>総人数</span></div>
+      <div><b class="num" id="tRes">—</b><span>予約人数との差</span></div>
+      <div><b class="num" id="tCancel">0人</b><span>キャンセル</span></div>
+      <div><b class="num" id="tPlan">¥0</b><span>総合計金額（人数×会費）</span></div>
+      <div class="r"><b class="num" id="tGot">¥0</b><span>実際の回収金額</span></div>
+      <div class="g"><b class="num" id="tPlus">¥0</b><span>プラスでの回収金額</span></div>
+    </section>
+    <div class="panel" style="gap:6px">
+      <div class="actions small"><span>会費の回収</span><span class="spacer"></span><span class="num" id="tLeft"></span></div>
+      <div class="bar"><i id="tBar"></i></div>
+    </div>
+
+    <section class="panel">
+      <h2>学年別の人数</h2>
+      <div class="tablewrap"><table>
+        <thead><tr><th>卒業年度</th><th>年齢</th><th>出席</th><th>集金済み</th><th>回収額</th></tr></thead>
+        <tbody id="gradeBody"></tbody>
+      </table></div>
+    </section>
+
+  </div>
+
+  <!-- ===== 管理画面 ===== -->
+  <div id="adminView">
+    <section class="panel" id="lockPanel">
+      <h2 id="lockTitle">管理画面</h2>
+      <p class="small muted" id="lockMsg">管理パスワードを入れてください。</p>
+      <div class="fields"><label>パスワード<input id="pw1" type="password" autocomplete="current-password"></label>
+        <label id="pw2wrap" hidden>もう一度<input id="pw2" type="password" autocomplete="new-password"></label></div>
+      <div class="actions"><button class="btn" id="pwBtn">開く</button></div>
+    </section>
+
+    <div id="adminBody" hidden style="display:flex;flex-direction:column;gap:16px">
+      <p class="small muted" id="roWarn" hidden data-x>この端末のアカウントでは変更を保存できません。保存できるのは、このページの持ち主と編集者として招待された人です。</p>
+
+
+      <details class="panel" id="addDetails" open>
+        <summary>人を追加</summary>
+        <div class="fields">
+          <label>卒業年度 または 先生<select id="aYear"></select></label>
+        </div>
+        <label>名前<textarea id="aNames" placeholder="山田太郎&#10;鈴木次郎&#10;田中三郎"></textarea></label>
+        <label>備考（全員に同じ内容を付けるとき）<input id="aNote" placeholder="備考"></label>
+        <div class="actions"><button class="btn" id="aBtn">追加</button><span class="small muted" id="aHint"></span></div>
+      </details>
+
+
+      <section class="panel">
+        <h2>名簿</h2>
+        <div class="toolbar">
+          <label>卒業年度で絞る<select id="flYear"><option value="">すべて</option></select></label>
+          <label>出欠<select id="flStatus"><option value="">すべて</option><option value="arrived">出席済み</option><option value="notyet">まだ来ていない</option><option value="cancel">キャンセル</option></select></label>
+          <label>集金<select id="flPay"><option value="">すべて</option><option value="paid">集金済み</option><option value="unpaid">未集金</option></select></label>
+          <label>名前で探す<input id="flQ" type="search"></label>
+        </div>
+        <div class="bulk">
+          <label style="flex-direction:row;align-items:center;gap:4px;color:var(--muted);font-size:11px"><input type="checkbox" id="selAll" style="width:14px;height:14px;margin:0;accent-color:var(--board)">表示中を全て選択</label>
+          <span class="num" id="selCount" style="font-size:11px;color:var(--muted)">0人選択</span>
+          <span class="spacer"></span>
+          <select class="sel" id="bYear" style="width:auto;flex:1 1 160px" aria-label="一括で設定する卒業年度"></select>
+          <button class="btn sm" id="bYearBtn">年度を一括変更</button>
+          <button class="btn sm ghost" id="bPaid">一括で集金済み</button>
+          <button class="btn sm ghost" id="bUnpaid">一括で未集金</button>
+        </div>
+        <div class="list" id="aList"></div>
+      </section>
+      <div class="actions" style="justify-content:flex-end;gap:16px"><button class="linkbtn" id="bkSave">データを書き出す</button><button class="linkbtn" id="bkLoad">データを読み込む</button><input type="file" id="bkFile" accept=".json,application/json" hidden><button class="linkbtn" id="pwChange">パスワードを変更</button></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const yen = n => "¥" + Math.round(Number(n)||0).toLocaleString("ja-JP");
+const SCHOOLS = {high:["高校",18], junior:["中学校",15], elem:["小学校",12], univ:["大学（4年制）",22], college:["短大・専門学校",20]};
+let db=null, user=null, myId=null, canEditLevel=false;
+let ev={}, members=[], pays={}, adminCfg=null, unlocked=false, mode="admin";
+let selected=new Set(), editingId=null;
+
+/* ---- 年度・年齢 ---- */
+const fyOf = d => d.getMonth()>=3 ? d.getFullYear() : d.getFullYear()-1;
+function era(y){ let n;
+  if(y>=2019){n=y-2018;return "令和"+(n===1?"元":n);}
+  if(y>=1989){n=y-1988;return "平成"+(n===1?"元":n);}
+  return "昭和"+(y-1925); }
+const yearLabel = y => `${era(y)}年度卒（${y}）`;
+function refDate(){ if(ev.date){ const d=new Date(ev.date+"T12:00:00"); if(!isNaN(d)) return d; } return new Date(); }
+function ageOf(y){ if(!y) return null; return fyOf(refDate()) - Number(y) + (SCHOOLS[ev.school]||SCHOOLS.high)[1]; }
+function yearOptions(sel, first, teacher){
+  sel.textContent=""; if(first){ const o=new Option(first,""); sel.add(o); }
+  if(teacher) sel.add(new Option("先生","T"));
+  const top=fyOf(new Date());
+  for(let y=top;y>=1950;y--){ const a=ageOf(y); sel.add(new Option(`${yearLabel(y)}・${a}歳`, y)); }
+}
+function fillStatic(){
+  const es=$("#eSchool"); for(const [k,[n,a]] of Object.entries(SCHOOLS)) es.add(new Option(`${n}（卒業時${a}歳）`,k));
+  const et=$("#eTime"); et.add(new Option("未定","")); for(let h=9;h<=23;h++) for(const m of ["00","30"]) et.add(new Option(`${h}:${m}〜`,`${h}:${m}`));
+  const ef=$("#eFee"); ef.add(new Option("未定","")); for(let v=0;v<=30000;v+=500) ef.add(new Option(yen(v),v));
+  const tf=$("#eTFee"); tf.add(new Option("会費と同じ","")); for(let v=0;v<=30000;v+=500) tf.add(new Option(v===0?"無料（¥0）":yen(v),v));
+  const er=$("#eRes"); er.add(new Option("未定","")); for(let v=1;v<=300;v++) er.add(new Option(v+"人",v));
+}
+function refreshYearSelects(){
+  const keep = id => $(id).value;
+  const a=keep("#aYear"), b=keep("#bYear"), f=keep("#flYear");
+  yearOptions($("#aYear"),"卒業年度・先生を選ぶ",true); $("#aYear").value=a;
+  yearOptions($("#bYear"),"変更先を選ぶ",true); $("#bYear").value=b;
+  const fl=$("#flYear"); fl.textContent=""; fl.add(new Option("すべて",""));
+  if(members.some(isT)) fl.add(new Option("先生","T"));
+  [...new Set(members.filter(m=>!isT(m)).map(m=>m.gradYear).filter(Boolean))].sort((x,y)=>x-y).forEach(y=>fl.add(new Option(`${yearLabel(y)}・${ageOf(y)}歳`,y)));
+  fl.value=[...fl.options].some(o=>o.value==f)?f:"";
+}
+
+/* ---- util ---- */
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>t.hidden=true,2400); }
+const num = v => { v=String(v??"").replace(/[^\d]/g,""); return v===""?0:Number(v); };
+const fee = () => Number(ev.fee)||0;
+const isT = m => !!m && m.kind==="teacher";
+const feeOf = m => (isT(m) && ev.teacherFee!==null && ev.teacherFee!==undefined && ev.teacherFee!=="") ? Number(ev.teacherFee) : fee();
+const gkey = m => isT(m) ? 99999 : (m.gradYear||0);
+const glabel = k => k===99999 ? "先生" : k ? yearLabel(k) : "卒業年度 未選択";
+const selToFields = v => v==="T" ? {kind:"teacher", gradYear:null} : {kind:"alumni", gradYear:Number(v)||null};
+const ord = k => k===99999 ? -1 : (k===0 ? 1e9 : k);
+const memberById = id => members.find(m=>m.id===id);
+const pay = id => pays[id] || {paid:false, received:0, extra:0};
+const attending = () => members.filter(m=>m.status!=="cancel");
+function writeErr(e){
+  if(e && e.code==="invalid_argument") toast("保存できませんでした。このアカウントには変更の権限がありません");
+  else if(e && e.code==="quota_exceeded") toast("保存できる件数の上限に達しました");
+  else toast("保存できませんでした。通信状況を確認してもう一度お試しください");
+}
+const el = (tag, cls, text) => { const e=document.createElement(tag); if(cls) e.className=cls; if(text!==undefined) e.textContent=text; return e; };
+
+/* ---- 会の案内 ---- */
+function renderEvent(){
+  $("#evTitle").textContent = ev.name || "同窓会";
+  $("#evLabel").textContent = ev.label || "同窓会 出欠帳";
+  let ds="未定"; if(ev.date){ const d=refDate(); ds=`${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日（${"日月火水木金土"[d.getDay()]}）`; }
+  $("#fDate").textContent=ds; $("#fTime").textContent=ev.time?ev.time+"〜":"未定";
+  $("#fPlace").textContent=ev.place||"未定"; $("#fCourse").textContent=ev.course||"未定";
+  $("#fFee").textContent=ev.fee!==null&&ev.fee!==undefined&&ev.fee!==""?yen(ev.fee):"未定";
+  $("#fRes").textContent=ev.reserved?ev.reserved+"人":"未定";
+}
+function fillEventForm(){
+  $("#eLabel").value=ev.label||""; $("#eName").value=ev.name||""; $("#eSchool").value=ev.school||"high"; $("#eDate").value=ev.date||"";
+  $("#eTime").value=ev.time||""; $("#ePlace").value=ev.place||""; $("#eFee").value=ev.fee??"";
+  $("#eRes").value=ev.reserved??""; $("#eTFee").value=ev.teacherFee??""; $("#eCourse").value=ev.course||"";
+}
+
+/* ---- 参加者画面 ---- */
+const SKIP=/(一覧|名簿|メンバー|参加者|出欠|お願い|よろしく|ありがと|お疲れ|おつかれ|以上)/;
+const STATUS_WORDS=/(不参加|欠席|キャンセル|出席|参加予定|参加|未定|予定|×|✕|○|◯|◎)/g;
+const HONOR=/(さん|サン|くん|クン|君|ちゃん|チャン|様|さま|氏|先生|です)$/;
+function parseNames(text){
+  const out=[], seen=new Set();
+  for(let line of String(text).normalize("NFKC").split(/\r?\n/)){
+    line=line.replace(/\[[^\]]*\]/g," ").replace(/\b\d{1,2}:\d{2}\b/g," ").trim();
+    if(!line || /[:：]$/.test(line) || SKIP.test(line)) continue;
+    for(let p of line.split(/[、,;\/|\t]+|・(?=\S)/)){
+      p=p.replace(/[\p{Extended_Pictographic}️‍]/gu," ")
+         .replace(/^[\s\-*•●○◯◎・>]+/,"")
+         .replace(/^[①-⑳]\s*/,"")
+         .replace(/^\(?\d+[.)．:]?\s*/,"")
+         .replace(/[(（][^)）]*[)）]/g,m=>STATUS_WORDS.test(m)?" ":m);
+      STATUS_WORDS.lastIndex=0;
+      p=p.replace(STATUS_WORDS," ").replace(/[。!?！？.\s]+$/,"").replace(/\s+/g," ").trim();
+      if(!p) continue;
+      const toks=p.split(" ");
+      for(let n of (toks.length>=3?toks:[p])){
+        n=n.replace(HONOR,"").replace(HONOR,"").trim();
+        if(!n || n.length>24 || /^[\d\s]+$/.test(n)) continue;
+        const key=n.replace(/\s/g,"");
+        if(seen.has(key)) continue; seen.add(key);
+        out.push({name:n});
+      }
+    }
+  }
+  return out;
+}
+
+/* ---- 管理画面 ---- */
+async function sha(s){ if(!(window.crypto&&crypto.subtle)){ let h1=0x811c9dc5,h2=0x1234567; for(const ch of s){ const c=ch.codePointAt(0); h1=Math.imul(h1^c,16777619)>>>0; h2=Math.imul(h2+c,2654435761)>>>0; } return "f"+h1.toString(16)+h2.toString(16); } const b=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+let changingPw=false;
+function renderLock(){
+  const hasPw = adminCfg && adminCfg.hash;
+  const open = unlocked && !changingPw;
+  $("#summary").hidden=!open; $("#summary").style.display=open?"flex":"none";
+  $("#evEditBtn").hidden=!open;
+  if(open){ $("#lockPanel").hidden=true; $("#adminBody").hidden=false; $("#adminBody").style.display="flex"; return; }
+  $("#adminBody").hidden=true; $("#adminBody").style.display="none"; $("#lockPanel").hidden=false;
+  const setting = !hasPw || changingPw;
+  $("#pw2wrap").hidden=!setting;
+  if(setting && !canEditLevel){ $("#lockTitle").textContent="管理画面"; $("#lockMsg").textContent="まだ管理パスワードが設定されていません。このページの持ち主が最初に設定します。"; $("#pwBtn").hidden=true; $("#pw1").parentElement.hidden=true; return; }
+  $("#pwBtn").hidden=false; $("#pw1").parentElement.hidden=false;
+  $("#lockTitle").textContent = setting ? (changingPw?"パスワードを変更":"管理パスワードを決める") : "管理画面";
+  $("#lockMsg").textContent = setting ? "幹事だけが知るパスワードを決めてください（4文字以上）。" : "管理パスワードを入れてください。";
+  $("#pwBtn").textContent = setting ? "設定する" : "開く";
+}
+$("#pwBtn").onclick=async()=>{
+  const p1=$("#pw1").value;
+  const setting = !(adminCfg&&adminCfg.hash) || changingPw;
+  if(setting){
+    if(p1.length<4){ toast("4文字以上にしてください"); return; }
+    if(p1!==$("#pw2").value){ toast("2回の入力が一致しません"); return; }
+    const salt=[...crypto.getRandomValues(new Uint8Array(12))].map(x=>x.toString(16).padStart(2,"0")).join("");
+    const hash=await sha(salt+p1);
+    try{ await db.doc("config/admin").set({salt,hash}); adminCfg={salt,hash}; unlocked=true; changingPw=false; remember(hash); toast("パスワードを設定しました"); }
+    catch(e){ writeErr(e); return; }
+  } else {
+    const h=await sha(adminCfg.salt+p1);
+    if(h!==adminCfg.hash){ toast("パスワードが違います"); return; }
+    unlocked=true; remember(h);
+  }
+  $("#pw1").value=""; $("#pw2").value=""; renderLock(); renderAdmin();
+};
+$("#pw1").addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.isComposing) $("#pwBtn").click(); });
+function remember(h){ try{ sessionStorage.setItem("dsk-admin",h); }catch{} }
+function recalled(){ try{ return sessionStorage.getItem("dsk-admin"); }catch{ return null; } }
+$("#eClose").onclick=()=>{ $("#evDetails").hidden=true; };
+$("#evEditBtn").onclick=()=>{ const d=$("#evDetails"); fillEventForm(); d.hidden=false; d.scrollIntoView({behavior:"smooth",block:"start"}); setTimeout(()=>$("#eName").focus({preventScroll:true}),300); };
+$("#pwChange").onclick=()=>{ changingPw=true; renderLock(); $("#pw1").focus(); };
+
+function filtered(){
+  const fy=$("#flYear").value, fs=$("#flStatus").value, fp=$("#flPay").value, q=$("#flQ").value.trim().toLowerCase();
+  return members.filter(m=>{
+    if(fy==="T" && !isT(m)) return false;
+    if(fy && fy!=="T" && (isT(m) || String(m.gradYear)!==fy)) return false;
+    if(fs==="arrived" && (m.status==="cancel" || !m.arrived)) return false;
+    if(fs==="notyet" && (m.status==="cancel" || m.arrived)) return false;
+    if(fs==="cancel" && m.status!=="cancel") return false;
+    if(fp==="paid" && !pay(m.id).paid) return false;
+    if(fp==="unpaid" && pay(m.id).paid) return false;
+    if(q && ![m.name,m.note].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+function renderTotals(){
+  const att=attending(), cancel=members.length-att.length;
+  const plan=att.reduce((a,m)=>a+feeOf(m),0);
+  let got=0, plus=0; members.forEach(m=>{ const p=pay(m.id); got+=Number(p.received)||0; plus+=Number(p.extra)||0; });
+  $("#tCount").textContent=att.length+"人"; $("#tCancel").textContent=cancel+"人";
+  if(ev.reserved){ const d=att.length-Number(ev.reserved); $("#tRes").textContent=(d>0?"+":"")+d+"人"; } else $("#tRes").textContent="—";
+  $("#tPlan").textContent=yen(plan); $("#tGot").textContent=yen(got); $("#tPlus").textContent=yen(plus);
+  $("#tBar").style.width = plan ? Math.min(100,got/plan*100)+"%" : "0";
+  $("#tLeft").textContent = plan ? (plan-got>0 ? `あと ${yen(plan-got)}（回収＋プラス 合計 ${yen(got+plus)}）` : `会費は全額回収（回収＋プラス 合計 ${yen(got+plus)}）`) : "会費を設定すると総合計が出ます";
+
+  // 学年別
+  const tb=$("#gradeBody"); tb.textContent="";
+  const by={}; att.forEach(m=>{ const k=gkey(m); (by[k] ||= {n:0,paid:0,got:0}); by[k].n++; const p=pay(m.id); if(p.paid) by[k].paid++; by[k].got+=(Number(p.received)||0)+(Number(p.extra)||0); });
+  const keys=Object.keys(by).map(Number).sort((a,b)=>ord(a)-ord(b));
+  if(!keys.length){ const tr=el("tr"); const td=el("td","muted","出席者はまだいません"); td.colSpan=5; tr.append(td); tb.append(tr); }
+  keys.forEach(y=>{ const r=by[y], tr=el("tr");
+    tr.append(el("td",null,glabel(y)), el("td","num",(y&&y!==99999)?ageOf(y)+"歳":"—"), el("td","num",r.n+"人"), el("td","num",`${r.paid}/${r.n}`), el("td","num",yen(r.got))); tb.append(tr); });
+
+}
+let pendingRender=false, nameEditId=null, delAskId=null;
+function renderAdmin(){
+  if(mode!=="admin" || !unlocked) return;
+  const ae=document.activeElement; if(ae && ae.classList && ae.classList.contains("rnote")){ pendingRender=true; return; }
+  $("#roWarn").hidden = canEditLevel;
+  // 名簿
+  const list=$("#aList"); list.textContent="";
+  const shown=filtered();
+  [...selected].forEach(id=>{ if(!members.some(m=>m.id===id)) selected.delete(id); });
+  $("#selCount").textContent=selected.size+"人選択";
+  $("#selAll").checked = shown.length>0 && shown.every(m=>selected.has(m.id));
+  if(!shown.length){ const e=el("div","empty"); e.append(el("strong",null, members.length?"当てはまる人はいません":"名簿はまだ空です"), el("span",null, members.length?"絞り込みの条件を変えてみてください。":"上の「人を追加」で卒業年度を選び、名前を1行に1人ずつ入れてください。")); list.append(e); return; }
+  let curY;
+  shown.forEach(m=>{
+    const gy=gkey(m);
+    if(gy!==curY){ curY=gy;
+      const on=shown.filter(x=>gkey(x)===gy && x.status!=="cancel");
+      const h=el("div","ghead");
+      const tab=el("span","tab"); tab.append(el("b",null, glabel(gy)));
+      if(gy && gy!==99999) tab.append(el("span","age num",ageOf(gy)+"歳"));
+      h.append(tab);
+      h.append(el("span","cnt num",`${on.length}人・出席 ${on.filter(x=>x.arrived).length}/${on.length}・集金 ${on.filter(x=>pay(x.id).paid).length}/${on.length}`));
+      list.append(h);
+    }
+    const p=pay(m.id), on=m.status!=="cancel", f=feeOf(m);
+    const row=el("div","arow"+(on?"":" cancel"));
+    const cb=el("input"); cb.type="checkbox"; cb.checked=selected.has(m.id); cb.setAttribute("aria-label",m.name+"を選択");
+    cb.onchange=()=>{ cb.checked?selected.add(m.id):selected.delete(m.id); $("#selCount").textContent=selected.size+"人選択"; };
+    const who=el("div","who");
+    if(nameEditId===m.id){
+      const ni=el("input","rnote nameedit"); ni.value=m.name||""; ni.setAttribute("aria-label","名前を編集");
+      let done=false;
+      const commit=async()=>{ if(done) return; done=true; const v=ni.value.trim(); nameEditId=null; if(v && v!==m.name) await saveMember(m.id,{name:v},"名前を変更しました"); pendingRender=false; renderAdmin(); };
+      ni.onkeydown=e=>{ if(e.key==="Enter" && !e.isComposing) ni.blur(); if(e.key==="Escape"){ done=true; nameEditId=null; pendingRender=false; renderAdmin(); } };
+      ni.onblur=commit;
+      who.append(ni); setTimeout(()=>{ ni.focus(); ni.select(); },0);
+    } else {
+      const nb=el("button","namebtn",m.name); nb.title="押すと名前を編集";
+      nb.onclick=()=>{ nameEditId=m.id; delAskId=null; renderAdmin(); };
+      who.append(nb);
+    }
+    const info=[isT(m)?"先生":"", on?"":"キャンセル", (p.received||p.extra)?`回収 ${yen(p.received)}${p.extra?` ＋${yen(p.extra)}`:""}`:""].filter(Boolean).join("　");
+    if(info) who.append(el("small",null,info));
+    const note=el("input","rnote"); note.value=m.note||""; note.placeholder="備考"; note.setAttribute("aria-label",m.name+"の備考");
+    note.onchange=()=>saveMember(m.id,{note:note.value.trim()},"備考を保存しました");
+    note.onkeydown=e=>{ if(e.key==="Enter" && !e.isComposing) note.blur(); };
+    note.onblur=()=>{ if(pendingRender){ pendingRender=false; setTimeout(renderAdmin,0); } };
+    let tg;
+    if(on){
+      tg=el("button","tog"+(m.arrived?" on":""),"出席"); tg.setAttribute("aria-pressed",!!m.arrived);
+      tg.title=m.arrived?"押すと取り消し":"来たら押す";
+      tg.onclick=()=>saveMember(m.id,{arrived:!m.arrived}, m.arrived?`${m.name}さんの出席を取り消しました`:`${m.name}さん 出席`);
+    } else {
+      tg=el("button","tog off","キャンセル中"); tg.title="押すと登録に戻す";
+      tg.onclick=()=>saveMember(m.id,{status:"attend"},`${m.name}さんを登録に戻しました`);
+    }
+    const sp=el("button","stamp"+(p.paid?" paid":""), p.paid?"済":"集金\n未");
+    sp.setAttribute("aria-label", `${m.name} ${p.paid?"集金済み":"未集金"}`);
+    sp.onclick=()=>savePay(m.id, p.paid?{paid:false,received:0}:{paid:true,received:f}, p.paid?`${m.name}さんを未集金に戻しました`:`${m.name}さんから ${yen(f)} 受け取り`);
+    const plus=el("input","rnote rplus"); plus.inputMode="numeric"; plus.value=p.extra?String(p.extra):""; plus.placeholder="プラス"; plus.setAttribute("aria-label",m.name+"のプラス回収金額");
+    plus.onchange=()=>savePay(m.id,{extra:num(plus.value)}, num(plus.value)?`${m.name}さん プラス ${yen(num(plus.value))}`:"プラスを消しました");
+    plus.onkeydown=e=>{ if(e.key==="Enter" && !e.isComposing) plus.blur(); };
+    plus.onblur=note.onblur;
+    cb.classList.add("c-cb"); who.classList.add("c-who"); tg.classList.add("c-att"); sp.classList.add("c-pay"); note.classList.add("c-note"); plus.classList.add("c-plus");
+    const del=el("button","delbtn c-del","削除"); del.setAttribute("aria-label",m.name+"を削除");
+    del.onclick=()=>{ delAskId=m.id; nameEditId=null; renderAdmin(); };
+    row.append(cb,who,tg,sp,note,plus,del);
+    if(delAskId===m.id){
+      const cf=el("div","confirm");
+      cf.append(el("span",null,`${m.name}さんを削除しますか？　元に戻せません。`));
+      const yes=el("button","btn sm danger","はい、削除する"), no=el("button","btn ghost sm","いいえ");
+      yes.onclick=async()=>{ delAskId=null; try{ await db.collection("members").doc(m.id).delete(); await db.collection("payments").doc(m.id).delete(); selected.delete(m.id); toast(`${m.name}さんを削除しました`); }catch(e){ writeErr(e); } renderAdmin(); };
+      no.onclick=()=>{ delAskId=null; renderAdmin(); };
+      const a=el("div","actions"); a.append(yes,no); cf.append(a); row.append(cf);
+      setTimeout(()=>no.focus({preventScroll:true}),0);
+    }
+    list.append(row);
+  });
+}
+async function saveMember(id,patch,msg){ try{ await db.collection("members").doc(id).update(patch); if(msg) toast(msg); }catch(e){ writeErr(e); } }
+async function savePay(id,patch,msg){ const cur=pay(id); try{ await db.collection("payments").doc(id).set({paid:!!cur.paid, received:Number(cur.received)||0, extra:Number(cur.extra)||0, ...patch}); if(msg) toast(msg); }catch(e){ writeErr(e); } }
+
+$("#aBtn").onclick=async()=>{
+  const yv=$("#aYear").value, y=yv;
+  const names=parseNames($("#aNames").value);
+  if(!y){ toast("卒業年度か先生を選んでください"); $("#aYear").focus(); return; }
+  if(!names.length){ toast("名前を入れてください"); $("#aNames").focus(); return; }
+  const note=$("#aNote").value.trim(); const btn=$("#aBtn"); btn.disabled=true;
+  let ok=0;
+  try{ for(const p of names){ await db.collection("members").add({name:p.name, ...selToFields(yv), status:"attend", note, createdAt:Date.now()+ok}); ok++; } }
+  catch(e){ writeErr(e); }
+  btn.disabled=false;
+  if(ok){ toast(`${ok}人を追加しました`); $("#aNames").value=""; $("#aNote").value=""; }
+};
+$("#aNames").addEventListener("input",()=>{ const ps=parseNames($("#aNames").value); $("#aHint").textContent=ps.length?`読み取った名前：${ps.map(p=>p.name).join("、")}`:""; });
+
+$("#selAll").onchange=()=>{ const shown=filtered(); shown.forEach(m=>$("#selAll").checked?selected.add(m.id):selected.delete(m.id)); renderAdmin(); };
+async function bulk(fn,label){
+  if(!selected.size){ toast("先に名簿で人を選んでください"); return; }
+  const ids=[...selected]; let ok=0;
+  try{ for(const id of ids){ await fn(id); ok++; } toast(`${ok}人を${label}`); selected.clear(); renderAdmin(); }catch(e){ writeErr(e); }
+}
+$("#bYearBtn").onclick=()=>{ const v=$("#bYear").value; if(!v){ toast("変更先を選んでください"); return; } bulk(id=>db.collection("members").doc(id).update(selToFields(v)), `${v==="T"?"先生":yearLabel(Number(v))}に変更しました`); };
+$("#bPaid").onclick=()=>bulk(id=>{ const c=pay(id); return db.collection("payments").doc(id).set({paid:true, received:feeOf(memberById(id)), extra:Number(c.extra)||0}); },"集金済みにしました");
+$("#bUnpaid").onclick=()=>bulk(id=>{ const c=pay(id); return db.collection("payments").doc(id).set({paid:false, received:0, extra:Number(c.extra)||0}); },"未集金にしました");
+["#flYear","#flStatus","#flPay"].forEach(s=>$(s).onchange=renderAdmin); $("#flQ").addEventListener("input",renderAdmin);
+
+$("#eSave").onclick=async()=>{
+  const v=s=>$(s).value;
+  const body={label:v("#eLabel").trim(), name:v("#eName").trim(), school:v("#eSchool"), date:v("#eDate"), time:v("#eTime"), place:v("#ePlace").trim(), course:v("#eCourse").trim(), fee:v("#eFee")===""?null:Number(v("#eFee")), reserved:v("#eRes")===""?null:Number(v("#eRes")), teacherFee:v("#eTFee")===""?null:Number(v("#eTFee"))};
+  try{ await db.doc("event/info").set(body); toast("会の情報を保存しました"); $("#evDetails").hidden=true; }catch(e){ writeErr(e); }
+};
+
+function renderAll(){ renderEvent(); refreshYearSelects(); renderTotals(); renderAdmin(); }
+
+
+/* ---- このブラウザに保存するデータ置き場 ---- */
+const LKEY="dousoukai-data-v1";
+function makeLocalDb(){
+  let store={}; try{ store=JSON.parse(localStorage.getItem(LKEY)||"{}")||{}; }catch{ store={}; }
+  const save=()=>{ try{ localStorage.setItem(LKEY,JSON.stringify(store)); }catch{ toast("このブラウザでは保存できません"); } };
+  const clone=v=>JSON.parse(JSON.stringify(v));
+  const rid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+  const docL={}, colL={};
+  const parent=p=>p.split("/").slice(0,-1).join("/");
+  const snapDoc=p=>{ const v=store[p]; return {id:p.split("/").pop(), exists:!!v, data:()=>v?clone(v):undefined, metadata:{fromCache:false,hasPendingWrites:false}}; };
+  const snapCol=c=>{ const docs=Object.keys(store).filter(k=>parent(k)===c).map(snapDoc); return {docs, size:docs.length, empty:!docs.length}; };
+  const notify=p=>{ (docL[p]||[]).forEach(f=>f(snapDoc(p))); const c=parent(p); (colL[c]||[]).forEach(f=>f(snapCol(c))); };
+  const notifyAll=()=>{ Object.keys(docL).forEach(p=>(docL[p]||[]).forEach(f=>f(snapDoc(p)))); Object.keys(colL).forEach(c=>(colL[c]||[]).forEach(f=>f(snapCol(c)))); };
+  const doc=p=>({ id:p.split("/").pop(), path:p,
+    get:async()=>snapDoc(p),
+    set:async d=>{ store[p]=clone(d); save(); notify(p); },
+    update:async d=>{ if(!store[p]) throw {code:"invalid_argument",message:"no doc"}; Object.assign(store[p],clone(d)); save(); notify(p); },
+    delete:async()=>{ delete store[p]; save(); notify(p); },
+    onSnapshot:fn=>{ (docL[p] ||= []).push(fn); setTimeout(()=>fn(snapDoc(p)),0); return ()=>{ docL[p]=docL[p].filter(x=>x!==fn); }; } });
+  const collection=c=>({ path:c,
+    doc:id=>doc(c+"/"+(id||rid())),
+    add:async d=>{ const r=doc(c+"/"+rid()); await r.set(d); return r; },
+    get:async()=>snapCol(c),
+    onSnapshot:fn=>{ (colL[c] ||= []).push(fn); setTimeout(()=>fn(snapCol(c)),0); return ()=>{ colL[c]=colL[c].filter(x=>x!==fn); }; } });
+  window.addEventListener("storage",e=>{ if(e.key===LKEY){ try{ store=JSON.parse(e.newValue||"{}")||{}; }catch{} notifyAll(); } });
+  return { doc, collection,
+    exportJson:()=>JSON.stringify(store,null,1),
+    importJson:txt=>{ const d=JSON.parse(txt); if(!d||typeof d!=="object") throw new Error("bad"); store=d; save(); notifyAll(); } };
+}
+
+/* ---- 起動 ---- */
+fillStatic(); refreshYearSelects(); renderEvent();
+(async()=>{
+  db = makeLocalDb(); canEditLevel = true;
+  $("#bkSave").onclick=()=>{
+    const blob=new Blob([db.exportJson()],{type:"application/json"});
+    const a=document.createElement("a"); const d=new Date();
+    a.href=URL.createObjectURL(blob); a.download=`同窓会データ_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}.json`;
+    document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    toast("データを書き出しました");
+  };
+  $("#bkLoad").onclick=()=>$("#bkFile").click();
+  $("#bkFile").onchange=async()=>{
+    const f=$("#bkFile").files[0]; if(!f) return;
+    try{ db.importJson(await f.text()); toast("データを読み込みました"); }catch{ toast("このファイルは読み込めませんでした"); }
+    $("#bkFile").value="";
+  };
+  renderLock();
+  db.doc("event/info").onSnapshot(s=>{ ev=s.exists?s.data():{}; fillEventForm(); renderAll(); });
+  db.doc("config/admin").onSnapshot(s=>{ adminCfg=s.exists?s.data():null; if(adminCfg && recalled()===adminCfg.hash) unlocked=true; renderLock(); renderAdmin(); });
+  db.collection("payments").onSnapshot(s=>{ pays={}; s.docs.forEach(d=>pays[d.id]=d.data()); renderAll(); });
+  db.collection("members").onSnapshot(s=>{
+    members=s.docs.map(d=>({id:d.id,...d.data()}));
+    members.sort((a,b)=>ord(gkey(a))-ord(gkey(b)) || (a.createdAt||0)-(b.createdAt||0));
+    renderAll();
+  }, ()=>toast("名簿の更新が止まりました。ページを開き直してください"));
+})();
+</script>
+
+</body>
+</html>
