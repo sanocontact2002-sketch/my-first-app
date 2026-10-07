@@ -223,7 +223,7 @@ details.panel[open] summary{margin-bottom:4px}
       <p class="small muted" id="lockMsg">管理パスワードを入れてください。</p>
       <div class="fields"><label>パスワード<input id="pw1" type="password" autocomplete="current-password"></label>
         <label id="pw2wrap" hidden>もう一度<input id="pw2" type="password" autocomplete="new-password"></label></div>
-      <div class="actions"><button class="btn" id="pwBtn">開く</button></div>
+      <div class="actions"><button class="btn" id="pwBtn">開く</button><button class="btn ghost" id="pwCancel" hidden>やめる</button><span class="spacer"></span><button class="linkbtn" id="setupLink">はじめて使うとき（パスワードを決める）</button></div>
     </section>
 
     <div id="adminBody" hidden style="display:flex;flex-direction:column;gap:16px">
@@ -260,12 +260,15 @@ details.panel[open] summary{margin-bottom:4px}
         </div>
         <div class="list" id="aList"></div>
       </section>
-      <div class="actions" style="justify-content:flex-end;gap:16px"><button class="linkbtn" id="bkSave">データを書き出す</button><button class="linkbtn" id="bkLoad">データを読み込む</button><input type="file" id="bkFile" accept=".json,application/json" hidden><button class="linkbtn" id="pwChange">パスワードを変更</button></div>
+      <div class="actions" style="justify-content:flex-end;gap:16px"><button class="linkbtn" id="pwChange">パスワードを変更</button></div>
     </div>
   </div>
 </div>
 <div class="toast" id="toast" hidden></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore-compat.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const yen = n => "¥" + Math.round(Number(n)||0).toLocaleString("ja-JP");
@@ -321,7 +324,7 @@ const memberById = id => members.find(m=>m.id===id);
 const pay = id => pays[id] || {paid:false, received:0, extra:0};
 const attending = () => members.filter(m=>m.status!=="cancel");
 function writeErr(e){
-  if(e && e.code==="invalid_argument") toast("保存できませんでした。このアカウントには変更の権限がありません");
+  if(e && (e.code==="invalid_argument"||e.code==="permission-denied")) toast("保存できませんでした。このアカウントには変更の権限がありません");
   else if(e && e.code==="quota_exceeded") toast("保存できる件数の上限に達しました");
   else toast("保存できませんでした。通信状況を確認してもう一度お試しください");
 }
@@ -376,45 +379,50 @@ function parseNames(text){
 
 /* ---- 管理画面 ---- */
 async function sha(s){ if(!(window.crypto&&crypto.subtle)){ let h1=0x811c9dc5,h2=0x1234567; for(const ch of s){ const c=ch.codePointAt(0); h1=Math.imul(h1^c,16777619)>>>0; h2=Math.imul(h2+c,2654435761)>>>0; } return "f"+h1.toString(16)+h2.toString(16); } const b=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
-let changingPw=false;
+let changingPw=false, setupMode=false, authUser=null;
+const ADMIN_EMAIL="kanji@dousoukai-33146.firebaseapp.com";
 function renderLock(){
-  const hasPw = adminCfg && adminCfg.hash;
-  const open = unlocked && !changingPw;
+  const open = !!authUser && !changingPw;
+  unlocked = !!authUser;
   $("#summary").hidden=!open; $("#summary").style.display=open?"flex":"none";
   $("#evEditBtn").hidden=!open;
   if(open){ $("#lockPanel").hidden=true; $("#adminBody").hidden=false; $("#adminBody").style.display="flex"; return; }
   $("#adminBody").hidden=true; $("#adminBody").style.display="none"; $("#lockPanel").hidden=false;
-  const setting = !hasPw || changingPw;
+  const setting = setupMode || changingPw;
   $("#pw2wrap").hidden=!setting;
-  if(setting && !canEditLevel){ $("#lockTitle").textContent="管理画面"; $("#lockMsg").textContent="まだ管理パスワードが設定されていません。このページの持ち主が最初に設定します。"; $("#pwBtn").hidden=true; $("#pw1").parentElement.hidden=true; return; }
-  $("#pwBtn").hidden=false; $("#pw1").parentElement.hidden=false;
-  $("#lockTitle").textContent = setting ? (changingPw?"パスワードを変更":"管理パスワードを決める") : "管理画面";
-  $("#lockMsg").textContent = setting ? "幹事だけが知るパスワードを決めてください（4文字以上）。" : "管理パスワードを入れてください。";
+  $("#lockTitle").textContent = changingPw ? "パスワードを変更" : setupMode ? "管理パスワードを決める" : "管理画面";
+  $("#lockMsg").textContent = setting ? (changingPw?"新しいパスワードを入れてください（6文字以上）。":"幹事だけが知るパスワードを決めてください（6文字以上）。最初の1回だけ行います。") : "管理パスワードを入れてください。";
   $("#pwBtn").textContent = setting ? "設定する" : "開く";
+  $("#pwCancel").hidden = !setting;
+  $("#setupLink").hidden = setting;
 }
+const authMsg = e => ({ "auth/invalid-credential":"パスワードが違います", "auth/wrong-password":"パスワードが違います", "auth/user-not-found":"まだパスワードが決まっていません。「はじめて使うとき」から決めてください", "auth/too-many-requests":"何度も間違えたため、しばらく待ってからお試しください", "auth/network-request-failed":"通信できませんでした。電波の良いところでもう一度お試しください", "auth/weak-password":"6文字以上にしてください", "auth/requires-recent-login":"安全のため、ページを開き直してログインしてから変更してください" })[e&&e.code] || "うまくいきませんでした。もう一度お試しください";
 $("#pwBtn").onclick=async()=>{
-  const p1=$("#pw1").value;
-  const setting = !(adminCfg&&adminCfg.hash) || changingPw;
+  const p1=$("#pw1").value, btn=$("#pwBtn");
+  const setting = setupMode || changingPw;
   if(setting){
-    if(p1.length<4){ toast("4文字以上にしてください"); return; }
+    if(p1.length<6){ toast("6文字以上にしてください"); return; }
     if(p1!==$("#pw2").value){ toast("2回の入力が一致しません"); return; }
-    const salt=[...crypto.getRandomValues(new Uint8Array(12))].map(x=>x.toString(16).padStart(2,"0")).join("");
-    const hash=await sha(salt+p1);
-    try{ await db.doc("config/admin").set({salt,hash}); adminCfg={salt,hash}; unlocked=true; changingPw=false; remember(hash); toast("パスワードを設定しました"); }
-    catch(e){ writeErr(e); return; }
-  } else {
-    const h=await sha(adminCfg.salt+p1);
-    if(h!==adminCfg.hash){ toast("パスワードが違います"); return; }
-    unlocked=true; remember(h);
-  }
-  $("#pw1").value=""; $("#pw2").value=""; renderLock(); renderAdmin();
+  } else if(!p1){ toast("パスワードを入れてください"); return; }
+  btn.disabled=true;
+  try{
+    if(changingPw){ await auth.currentUser.updatePassword(p1); changingPw=false; toast("パスワードを変更しました"); }
+    else if(setupMode){
+      try{ await auth.createUserWithEmailAndPassword(ADMIN_EMAIL,p1); setupMode=false; toast("パスワードを設定しました"); }
+      catch(e){ if(e.code==="auth/email-already-in-use"){ setupMode=false; toast("パスワードはもう決まっています。そのパスワードで開いてください"); } else throw e; }
+    }
+    else { await auth.signInWithEmailAndPassword(ADMIN_EMAIL,p1); }
+    $("#pw1").value=""; $("#pw2").value="";
+  }catch(e){ toast(authMsg(e)); }
+  btn.disabled=false; renderLock(); renderAdmin();
 };
-$("#pw1").addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.isComposing) $("#pwBtn").click(); });
-function remember(h){ try{ sessionStorage.setItem("dsk-admin",h); }catch{} }
-function recalled(){ try{ return sessionStorage.getItem("dsk-admin"); }catch{ return null; } }
+$("#pw1").addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.isComposing) ($("#pw2wrap").hidden ? $("#pwBtn").click() : $("#pw2").focus()); });
+$("#pw2").addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.isComposing) $("#pwBtn").click(); });
+$("#setupLink").onclick=()=>{ setupMode=true; renderLock(); $("#pw1").focus(); };
+$("#pwCancel").onclick=()=>{ setupMode=false; changingPw=false; $("#pw1").value=""; $("#pw2").value=""; renderLock(); };
 $("#eClose").onclick=()=>{ $("#evDetails").hidden=true; };
 $("#evEditBtn").onclick=()=>{ const d=$("#evDetails"); fillEventForm(); d.hidden=false; d.scrollIntoView({behavior:"smooth",block:"start"}); setTimeout(()=>$("#eName").focus({preventScroll:true}),300); };
-$("#pwChange").onclick=()=>{ changingPw=true; renderLock(); $("#pw1").focus(); };
+$("#pwChange").onclick=()=>{ changingPw=true; renderLock(); window.scrollTo(0,0); $("#pw1").focus(); };
 
 function filtered(){
   const fy=$("#flYear").value, fs=$("#flStatus").value, fp=$("#flPay").value, q=$("#flQ").value.trim().toLowerCase();
@@ -565,62 +573,37 @@ $("#eSave").onclick=async()=>{
 function renderAll(){ renderEvent(); refreshYearSelects(); renderTotals(); renderAdmin(); }
 
 
-/* ---- このブラウザに保存するデータ置き場 ---- */
-const LKEY="dousoukai-data-v1";
-function makeLocalDb(){
-  let store={}; try{ store=JSON.parse(localStorage.getItem(LKEY)||"{}")||{}; }catch{ store={}; }
-  const save=()=>{ try{ localStorage.setItem(LKEY,JSON.stringify(store)); }catch{ toast("このブラウザでは保存できません"); } };
-  const clone=v=>JSON.parse(JSON.stringify(v));
-  const rid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
-  const docL={}, colL={};
-  const parent=p=>p.split("/").slice(0,-1).join("/");
-  const snapDoc=p=>{ const v=store[p]; return {id:p.split("/").pop(), exists:!!v, data:()=>v?clone(v):undefined, metadata:{fromCache:false,hasPendingWrites:false}}; };
-  const snapCol=c=>{ const docs=Object.keys(store).filter(k=>parent(k)===c).map(snapDoc); return {docs, size:docs.length, empty:!docs.length}; };
-  const notify=p=>{ (docL[p]||[]).forEach(f=>f(snapDoc(p))); const c=parent(p); (colL[c]||[]).forEach(f=>f(snapCol(c))); };
-  const notifyAll=()=>{ Object.keys(docL).forEach(p=>(docL[p]||[]).forEach(f=>f(snapDoc(p)))); Object.keys(colL).forEach(c=>(colL[c]||[]).forEach(f=>f(snapCol(c)))); };
-  const doc=p=>({ id:p.split("/").pop(), path:p,
-    get:async()=>snapDoc(p),
-    set:async d=>{ store[p]=clone(d); save(); notify(p); },
-    update:async d=>{ if(!store[p]) throw {code:"invalid_argument",message:"no doc"}; Object.assign(store[p],clone(d)); save(); notify(p); },
-    delete:async()=>{ delete store[p]; save(); notify(p); },
-    onSnapshot:fn=>{ (docL[p] ||= []).push(fn); setTimeout(()=>fn(snapDoc(p)),0); return ()=>{ docL[p]=docL[p].filter(x=>x!==fn); }; } });
-  const collection=c=>({ path:c,
-    doc:id=>doc(c+"/"+(id||rid())),
-    add:async d=>{ const r=doc(c+"/"+rid()); await r.set(d); return r; },
-    get:async()=>snapCol(c),
-    onSnapshot:fn=>{ (colL[c] ||= []).push(fn); setTimeout(()=>fn(snapCol(c)),0); return ()=>{ colL[c]=colL[c].filter(x=>x!==fn); }; } });
-  window.addEventListener("storage",e=>{ if(e.key===LKEY){ try{ store=JSON.parse(e.newValue||"{}")||{}; }catch{} notifyAll(); } });
-  return { doc, collection,
-    exportJson:()=>JSON.stringify(store,null,1),
-    importJson:txt=>{ const d=JSON.parse(txt); if(!d||typeof d!=="object") throw new Error("bad"); store=d; save(); notifyAll(); } };
+/* ---- Firebase ---- */
+const firebaseConfig = {
+  apiKey: "AIzaSyBFMo9efWSpmk4b1uLiguQbehenLAjPjUk",
+  authDomain: "dousoukai-33146.firebaseapp.com",
+  projectId: "dousoukai-33146",
+  storageBucket: "dousoukai-33146.firebasestorage.app",
+  messagingSenderId: "696077596503",
+  appId: "1:696077596503:web:5f8934050721ed2e5df012"
+};
+let auth=null, unsubs=[];
+function stopData(){ unsubs.forEach(u=>{ try{u();}catch{} }); unsubs=[]; ev={}; members=[]; pays={}; }
+function startData(){
+  stopData();
+  const fail=()=>toast("名簿を読み込めませんでした。ページを開き直してください");
+  unsubs.push(db.doc("event/info").onSnapshot(s=>{ ev=s.exists?s.data():{}; fillEventForm(); renderAll(); }, fail));
+  unsubs.push(db.collection("payments").onSnapshot(s=>{ pays={}; s.docs.forEach(d=>pays[d.id]=d.data()); renderAll(); }, fail));
+  unsubs.push(db.collection("members").onSnapshot(s=>{
+    members=s.docs.map(d=>({id:d.id,...d.data()}));
+    members.sort((a,b)=>ord(gkey(a))-ord(gkey(b)) || (a.createdAt||0)-(b.createdAt||0));
+    renderAll();
+  }, fail));
 }
 
 /* ---- 起動 ---- */
 fillStatic(); refreshYearSelects(); renderEvent();
-(async()=>{
-  db = makeLocalDb(); canEditLevel = true;
-  $("#bkSave").onclick=()=>{
-    const blob=new Blob([db.exportJson()],{type:"application/json"});
-    const a=document.createElement("a"); const d=new Date();
-    a.href=URL.createObjectURL(blob); a.download=`同窓会データ_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}.json`;
-    document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
-    toast("データを書き出しました");
-  };
-  $("#bkLoad").onclick=()=>$("#bkFile").click();
-  $("#bkFile").onchange=async()=>{
-    const f=$("#bkFile").files[0]; if(!f) return;
-    try{ db.importJson(await f.text()); toast("データを読み込みました"); }catch{ toast("このファイルは読み込めませんでした"); }
-    $("#bkFile").value="";
-  };
+(()=>{
+  if(!window.firebase){ $("#lockMsg").textContent="読み込みに失敗しました。通信状況を確認して、ページを開き直してください。"; $("#pwBtn").hidden=true; $("#setupLink").hidden=true; return; }
+  firebase.initializeApp(firebaseConfig);
+  auth=firebase.auth(); db=firebase.firestore(); canEditLevel=true;
   renderLock();
-  db.doc("event/info").onSnapshot(s=>{ ev=s.exists?s.data():{}; fillEventForm(); renderAll(); });
-  db.doc("config/admin").onSnapshot(s=>{ adminCfg=s.exists?s.data():null; if(adminCfg && recalled()===adminCfg.hash) unlocked=true; renderLock(); renderAdmin(); });
-  db.collection("payments").onSnapshot(s=>{ pays={}; s.docs.forEach(d=>pays[d.id]=d.data()); renderAll(); });
-  db.collection("members").onSnapshot(s=>{
-    members=s.docs.map(d=>({id:d.id,...d.data()}));
-    members.sort((a,b)=>ord(gkey(a))-ord(gkey(b)) || (a.createdAt||0)-(b.createdAt||0));
-    renderAll();
-  }, ()=>toast("名簿の更新が止まりました。ページを開き直してください"));
+  auth.onAuthStateChanged(u=>{ authUser=u; if(u) startData(); else stopData(); renderLock(); renderAll(); });
 })();
 </script>
 
